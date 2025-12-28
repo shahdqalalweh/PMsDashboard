@@ -6,6 +6,3 @@ if __name__ == "__main__":
 
     dash = Dashboard(repo_name, repo_owner)
     dash.show_dashboard()
-
-
-
