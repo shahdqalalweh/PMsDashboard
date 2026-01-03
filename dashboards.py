@@ -1,21 +1,19 @@
 from prefect import flow
-from Extract import GetAPIs
+from extract import (
+    get_contributors,
+    get_branches,
+    get_commits,
+    get_pulls
+)
+from load import load_metrics
 
-class Dashboard:
+@flow(log_prints=True)
+def github_dashboard(repo_name, repo_owner):
 
-    def __init__(self, repo_name, repo_owner):
-        self.github = GetAPIs(repo_name, repo_owner)
+    devs = get_contributors(repo_owner, repo_name)
+    branches = get_branches(repo_owner, repo_name)
+    commits = get_commits(repo_owner, repo_name)
+    pulls = get_pulls(repo_owner, repo_name)
 
-    @flow(log_prints=True)
-    def show_dashboard(self):
-        print("Project Dashboard\n")
-
-        devs = self.github.get_contributors()
-        branches = self.github.get_branches()
-        commits = self.github.get_commits()
-        pulls = self.github.get_pulls()
-
-        print("Developers:", devs)
-        print("Branches:", branches)
-        print("Commits:", commits)
-        print("Pull Requests:", pulls)
+    load_metrics(devs, branches, commits, pulls)
+    print("Pipeline finished successfully")
