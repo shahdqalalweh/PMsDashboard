@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+.prefect/
+prefect-home/
+.venv/
+venv/
