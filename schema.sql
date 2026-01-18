@@ -1,4 +1,4 @@
--- Minimal schema (PostgreSQL) matching your ER diagram.
+-- Minimal schema (PostgreSQL) matching the corrected ERD + practical constraints.
 
 CREATE TABLE IF NOT EXISTS employees (
   employee_id INT PRIMARY KEY
@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE TABLE IF NOT EXISTS github_users (
   github_user_id BIGINT PRIMARY KEY,
-  github_login TEXT NOT NULL
+  github_login TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS employee_github_accounts (
@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS repositories (
   name TEXT NOT NULL,
   default_branch_name TEXT NOT NULL,
   default_branch_repo_id BIGINT NULL,
-  default_branch_branch_name TEXT NULL
+  default_branch_branch_name TEXT NULL,
+  CONSTRAINT uq_repo_owner_name UNIQUE (owner_org, name)
 );
 
 CREATE TABLE IF NOT EXISTS branches (
@@ -56,19 +57,20 @@ CREATE TABLE IF NOT EXISTS branch_commits (
 CREATE TABLE IF NOT EXISTS pull_requests (
   repo_id BIGINT NOT NULL,
   pr_number INT NOT NULL,
-  pr_id BIGINT NOT NULL,
+  pr_id BIGINT NOT NULL, -- REST pulls "id" (int). إذا بدك GraphQL node_id خليه TEXT.
   author_github_user_id BIGINT NULL,
   state TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   merged_at TIMESTAMPTZ NULL,
+
   head_repo_id BIGINT NULL,
   head_ref TEXT NULL,
   base_repo_id BIGINT NULL,
   base_ref TEXT NULL,
+
   PRIMARY KEY (repo_id, pr_number),
   FOREIGN KEY (repo_id) REFERENCES repositories(repo_id) ON DELETE CASCADE,
   FOREIGN KEY (author_github_user_id) REFERENCES github_users(github_user_id),
-  -- optional but recommended: keep referential integrity if head/base repo exists in repositories
   FOREIGN KEY (head_repo_id) REFERENCES repositories(repo_id),
   FOREIGN KEY (base_repo_id) REFERENCES repositories(repo_id)
 );

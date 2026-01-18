@@ -66,11 +66,53 @@ def upsert_repository(repo: Dict[str, Any], owner_org: str, name: str) -> int:
                 "owner_org": owner_org,
                 "name": name,
                 "default_branch_name": default_branch,
-                "default_branch_repo_id": None,
-                "default_branch_branch_name": None,
+                # helper link (best effort)
+                "default_branch_repo_id": repo_id,
+                "default_branch_branch_name": default_branch,
             },
         )
     return repo_id
+
+
+def upsert_repositories_min(rows: Iterable[Tuple[int, Optional[str], Optional[str]]]) -> None:
+    """
+    Upsert minimal repo rows by (repo_id, owner_org, name).
+    Useful for head/base repos referenced by PRs (forks).
+    """
+    payload = []
+    for rid, owner, nm in rows:
+        if not rid:
+            continue
+        payload.append(
+            {
+                "repo_id": int(rid),
+                "owner_org": owner or "unknown",
+                "name": nm or f"repo_{rid}",
+                "default_branch_name": "main",
+                "default_branch_repo_id": int(rid),
+                "default_branch_branch_name": "main",
+            }
+        )
+
+    if not payload:
+        return
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO repositories
+                    (repo_id, owner_org, name, default_branch_name, default_branch_repo_id, default_branch_branch_name)
+                VALUES
+                    (:repo_id, :owner_org, :name, :default_branch_name, :default_branch_repo_id, :default_branch_branch_name)
+                ON CONFLICT (repo_id) DO UPDATE SET
+                    owner_org = EXCLUDED.owner_org,
+                    name = EXCLUDED.name
+                """
+            ),
+            payload,
+        )
 
 
 def upsert_github_users(users: Iterable[Tuple[int, str]]) -> None:
@@ -201,6 +243,7 @@ def _parse_pr_time(s: Optional[str]) -> Optional[datetime]:
 
 def upsert_pull_requests(repo_id: int, prs: List[Dict[str, Any]]) -> None:
     rows = []
+    needed_repos = []  # (repo_id, owner_org, name)
 
     for pr in prs:
         number = pr.get("number")
@@ -210,7 +253,6 @@ def upsert_pull_requests(repo_id: int, prs: List[Dict[str, Any]]) -> None:
 
         created = _parse_pr_time(pr.get("created_at"))
         if not created:
-            # avoid writing misleading timestamps
             continue
 
         user = pr.get("user") or {}
@@ -218,6 +260,15 @@ def upsert_pull_requests(repo_id: int, prs: List[Dict[str, Any]]) -> None:
         base = pr.get("base") or {}
         head_repo = head.get("repo") or {}
         base_repo = base.get("repo") or {}
+
+        head_repo_id = int(head_repo["id"]) if head_repo.get("id") else repo_id
+        base_repo_id = int(base_repo["id"]) if base_repo.get("id") else repo_id
+
+        # collect minimal info for FK safety (if FK is enforced)
+        if head_repo_id:
+            needed_repos.append((head_repo_id, (head_repo.get("owner") or {}).get("login"), head_repo.get("name")))
+        if base_repo_id:
+            needed_repos.append((base_repo_id, (base_repo.get("owner") or {}).get("login"), base_repo.get("name")))
 
         rows.append(
             {
@@ -228,16 +279,22 @@ def upsert_pull_requests(repo_id: int, prs: List[Dict[str, Any]]) -> None:
                 "state": pr.get("state") or "unknown",
                 "created_at": created,
                 "merged_at": _parse_pr_time(pr.get("merged_at")),
-                # fallback to repo_id if head/base repo missing (fork deleted, etc.)
-                "head_repo_id": int(head_repo["id"]) if head_repo.get("id") else repo_id,
+                "head_repo_id": head_repo_id,
                 "head_ref": head.get("ref"),
-                "base_repo_id": int(base_repo["id"]) if base_repo.get("id") else repo_id,
+                "base_repo_id": base_repo_id,
                 "base_ref": base.get("ref"),
             }
         )
 
     if not rows:
         return
+
+    # make sure referenced repos exist (best effort)
+    # de-dup by id
+    dedup = {}
+    for rid, owner, name in needed_repos:
+        dedup[int(rid)] = (int(rid), owner, name)
+    upsert_repositories_min(dedup.values())
 
     engine = get_engine()
     with engine.begin() as conn:
